@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: Arial, sans-serif;
+            background: #f0f0f0;
+            min-height: 100vh;
+        }
+        
+        .container { 
+            margin: 0 auto;
+            padding: 20px 20px 100px 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            max-width: 1400px;
+        }
+
+        .editor-panel {
+            flex: 1;
+            overflow: hidden;
+        }
+
+        .assets-panel {
+            width: 100%;
+            padding: 15px;
+            background: #ffffff;
+            box-shadow: 0 -2px 10px rgba(0,0,0,0.1);
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            z-index: 100;
+        }
+
+        .asset-item {
+            width: 60px;
+            height: 60px;
+            margin: 5px;
+            cursor: move;
+            border: 2px solid transparent;
+            transition: all 0.2s;
+            object-fit: contain;
+            background: #f8f9fa;
+            border-radius: 4px;
+        }
+
+        .asset-item:hover {
+            border-color: #007bff;
+            transform: scale(1.1);
+        }
+
+        .controls {
+            margin: 20px 0;
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        #canvas-container {
+            max-width: 100%;
+            max-height: calc(100vh - 200px);
+            overflow: auto;
+            border: 1px solid #ccc;
+            margin: 20px 0;
+            position: relative;
+            background: #fff;
+            border-radius: 4px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+
+        #canvas {
+            cursor: default;
+            display: block;
+        }
+
+        .assets-grid {
+            display: flex;
+            justify-content: center;
+            gap: 15px;
+            padding: 10px;
+            flex-wrap: wrap;
+        }
+
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background 0.2s;
+        }
+
+        button:hover {
+            background: #0056b3;
+        }
+
+        input[type="file"] {
+            padding: 10px;
+            background: #fff;
+            border-radius: 4px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="editor-panel">
+            <input type="file" id="imageUpload" accept="image/*">
+            <div class="controls">
+                <button id="saveBtn">Save Image</button>
+                <button id="clearBtn">Clear Canvas</button>
+            </div>
+            <div id="canvas-container">
+                <canvas id="canvas"></canvas>
+            </div>
+        </div>
+        
+        <div class="assets-panel">
+            <div class="assets-grid">
+                <img src="assets/1.webp" class="asset-item" draggable="true">
+                <img src="assets/42.webp" class="asset-item" draggable="true">
+                <img src="assets/43.webp" class="asset-item" draggable="true">
+                <img src="assets/44.webp" class="asset-item" draggable="true">
+                <img src="assets/45.webp" class="asset-item" draggable="true">
+                <img src="assets/46.webp" class="asset-item" draggable="true">
+                <img src="assets/47.webp" class="asset-item" draggable="true">
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const imageUpload = document.getElementById('imageUpload');
+        const saveBtn = document.getElementById('saveBtn');
+        const clearBtn = document.getElementById('clearBtn');
+        const canvasContainer = document.getElementById('canvas-container');
+
+        const MAX_CANVAS_WIDTH = 1200;
+        const MAX_CANVAS_HEIGHT = 800;
+        const ASSET_SCALE_FACTOR = 2;
+        const MIN_SIZE = 20;
+
+        let baseImage = null;
+        let elements = [];
+        let selectedElement = null;
+        let dragStartX = 0;
+        let dragStartY = 0;
+        let elementStartX = 0;
+        let elementStartY = 0;
+        let isResizing = false;
+        let isDragging = false;
+        let currentResizeHandle = '';
+
+        function drawElement(element) {
+            ctx.drawImage(element.image, element.x, element.y, element.width, element.height);
+
+            if (element.isSelected) {
+                // Selection border
+                ctx.strokeStyle = '#007bff';
+                ctx.lineWidth = 2;
+                ctx.strokeRect(element.x, element.y, element.width, element.height);
+
+                // Resize handles
+                const handlePositions = [
+                    { x: element.x, y: element.y }, // Top-left
+                    { x: element.x + element.width, y: element.y }, // Top-right
+                    { x: element.x + element.width, y: element.y + element.height }, // Bottom-right
+                    { x: element.x, y: element.y + element.height } // Bottom-left
+                ];
+
+                handlePositions.forEach(pos => {
+                    ctx.fillStyle = 'white';
+                    ctx.strokeStyle = '#007bff';
+                    ctx.beginPath();
+                    ctx.arc(pos.x, pos.y, 5, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.stroke();
+                });
+
+                // Delete button
+                ctx.fillStyle = 'red';
+                ctx.beginPath();
+                ctx.arc(element.x + element.width, element.y, 10, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // X mark
+                ctx.strokeStyle = 'white';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(element.x + element.width - 4, element.y - 4);
+                ctx.lineTo(element.x + element.width + 4, element.y + 4);
+                ctx.moveTo(element.x + element.width + 4, element.y - 4);
+                ctx.lineTo(element.x + element.width - 4, element.y + 4);
+                ctx.stroke();
+            }
+        }
+
+        function drawCanvas() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            if (baseImage) {
+                ctx.drawImage(baseImage, 0, 0, canvas.width, canvas.height);
+            }
+            elements.forEach(drawElement);
+        }
+
+        function getMousePos(e) {
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            return {
+                x: (e.clientX - rect.left) * scaleX,
+                y: (e.clientY - rect.top) * scaleY
+            };
+        }
+
+        function getResizeHandle(x, y, element) {
+            const handleSize = 10;
+            const handles = [
+                { name: 'tl', x: element.x, y: element.y },
+                { name: 'tr', x: element.x + element.width, y: element.y },
+                { name: 'br', x: element.x + element.width, y: element.y + element.height },
+                { name: 'bl', x: element.x, y: element.y + element.height }
+            ];
+
+            for (const handle of handles) {
+                if (Math.abs(x - handle.x) <= handleSize && Math.abs(y - handle.y) <= handleSize) {
+                    return handle.name;
+                }
+            }
+            return null;
+        }
+
+        canvas.addEventListener('mousedown', (e) => {
+            const pos = getMousePos(e);
+            dragStartX = pos.x;
+            dragStartY = pos.y;
+
+            elements.forEach(element => element.isSelected = false);
+
+            for (let i = elements.length - 1; i >= 0; i--) {
+                const element = elements[i];
+                const handle = getResizeHandle(pos.x, pos.y, element);
+
+                if (handle) {
+                    isResizing = true;
+                    currentResizeHandle = handle;
+                    selectedElement = element;
+                    element.isSelected = true;
+                    elementStartX = element.x;
+                    elementStartY = element.y;
+                    break;
+                } else if (
+                    pos.x >= element.x && 
+                    pos.x <= element.x + element.width && 
+                    pos.y >= element.y && 
+                    pos.y <= element.y + element.height
+                ) {
+                    isDragging = true;
+                    selectedElement = element;
+                    element.isSelected = true;
+                    elementStartX = element.x;
+                    elementStartY = element.y;
+                    break;
+                }
+            }
+            drawCanvas();
+        });
+
+        canvas.addEventListener('mousemove', (e) => {
+            if (!selectedElement) return;
+
+            const pos = getMousePos(e);
+            const dx = pos.x - dragStartX;
+            const dy = pos.y - dragStartY;
+
+            if (isResizing) {
+                let newWidth = selectedElement.width;
+                let newHeight = selectedElement.height;
+                let newX = selectedElement.x;
+                let newY = selectedElement.y;
+
+                switch (currentResizeHandle) {
+                    case 'tl':
+                        newWidth = selectedElement.width - dx;
+                        newHeight = selectedElement.height - dy;
+                        newX = elementStartX + dx;
+                        newY = elementStartY + dy;
+                        break;
+                    case 'tr':
+                        newWidth = selectedElement.width + dx;
+                        newHeight = selectedElement.height - dy;
+                        newY = elementStartY + dy;
+                        break;
+                    case 'br':
+                        newWidth = selectedElement.width + dx;
+                        newHeight = selectedElement.height + dy;
+                        break;
+                    case 'bl':
+                        newWidth = selectedElement.width - dx;
+                        newHeight = selectedElement.height + dy;
+                        newX = elementStartX + dx;
+                        break;
+                }
+
+                if (newWidth >= MIN_SIZE && newHeight >= MIN_SIZE) {
+                    selectedElement.width = newWidth;
+                    selectedElement.height = newHeight;
+                    selectedElement.x = newX;
+                    selectedElement.y = newY;
+                }
+            } else if (isDragging) {
+                selectedElement.x = elementStartX + dx;
+                selectedElement.y = elementStartY + dy;
+            }
+
+            drawCanvas();
+        });
+
+        canvas.addEventListener('mouseup', () => {
+            isDragging = false;
+            isResizing = false;
+            currentResizeHandle = '';
+        });
+
+        imageUpload.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                baseImage = new Image();
+                baseImage.onload = () => {
+                    const scale = Math.min(
+                        MAX_CANVAS_WIDTH / baseImage.width,
+                        MAX_CANVAS_HEIGHT / baseImage.height
+                    );
+                    canvas.width = baseImage.width * scale;
+                    canvas.height = baseImage.height * scale;
+                    drawCanvas();
+                };
+                baseImage.src = event.target.result;
+            };
+            reader.readAsDataURL(file);
+        });
+
+        canvas.addEventListener('dragover', (e) => e.preventDefault());
+
+        canvas.addEventListener('drop', (e) => {
+            e.preventDefault();
+            const pos = getMousePos(e);
+            const assetSrc = e.dataTransfer.getData('text/plain');
+            
+            const img = new Image();
+            img.onload = () => {
+                const scale = Math.min(
+                    MAX_CANVAS_WIDTH / ASSET_SCALE_FACTOR / img.width,
+                    MAX_CANVAS_HEIGHT / ASSET_SCALE_FACTOR / img.height
+                );
+                
+                const element = {
+                    image: img,
+                    x: pos.x - (img.width * scale) / 2,
+                    y: pos.y - (img.height * scale) / 2,
+                    width: img.width * scale,
+                    height: img.height * scale,
+                    isSelected: false
+                };
+
+                elements.push(element);
+                drawCanvas();
+            };
+            img.src = assetSrc;
+        });
+
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Delete' && selectedElement) {
+                const index = elements.indexOf(selectedElement);
+                elements.splice(index, 1);
+                selectedElement = null;
+                drawCanvas();
+            }
+        });
+
+        canvas.addEventListener('click', (e) => {
+            const pos = getMousePos(e);
+            
+            if (selectedElement) {
+                const deleteX = selectedElement.x + selectedElement.width;
+                const deleteY = selectedElement.y;
+                const distance = Math.sqrt(
+                    Math.pow(pos.x - deleteX, 2) + Math.pow(pos.y - deleteY, 2)
+                );
+                
+                if (distance <= 10) {
+                    const index = elements.indexOf(selectedElement);
+                    elements.splice(index, 1);
+                    selectedElement = null;
+                    drawCanvas();
+                }
+            }
+        });
+
+        saveBtn.addEventListener('click', () => {
+            const link = document.createElement('a');
+            link.download = 'edited-image.png';
+            link.href = canvas.toDataURL();
+            link.click();
+        });
+
+        clearBtn.addEventListener('click', () => {
+            elements = [];
+            selectedElement = null;
+            drawCanvas();
+        });
+
+        document.querySelectorAll('.asset-item').forEach(asset => {
+            asset.addEventListener('dragstart', (e) => {
+                e.dataTransfer.setData('text/plain', e.target.src);
+            });
+        });
+
+        window.addEventListener('resize', () => {
+            if (baseImage) {
+                const scale = Math.min(
+                    MAX_CANVAS_WIDTH / baseImage.width,
+                    MAX_CANVAS_HEIGHT / baseImage.height
+                );
+                canvas.width = baseImage.width * scale;
+                canvas.height = baseImage.height * scale;
+                drawCanvas();
+            }
+        });
+    </script>
+</body>
+</html>
